@@ -8,6 +8,7 @@ First we load Stan and tell Stan to look for and use multiple processors, if ava
 ```{r}
 library(rstan)
 options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE) # see advice when loading library
 ```
 
 The code below generates a synthetic dataset of length 100, with slope of 1.5, instercept of 2, and a noise error standard deviation of 1.25.
@@ -25,7 +26,6 @@ y <- beta0 + beta1*x + rnorm(N,mean=0,sd=sigma)
 ```
 
 We plot the data
-
 
 ```{r}
 options(repr.plot.width=5, repr.plot.height=5)
@@ -80,13 +80,11 @@ model{
 
 We compile the Stan code via RStan below.
 
-
 ```{r}
 mod <- stan_model(model_code=stancode)
 ```
 
 We organize the data as an R list to pass to Stan
-
 
 ```{r}
 data <- list(N=N,x=x,y=y)
@@ -97,13 +95,11 @@ The first argument is the compiled model object, second the data, then we tell h
 The final argument tells Stan to open a progress bar in a new window to monitor the MCMC progress. 
 I don't know if this argument exists for PyStan and Stan.jl.
 
-
 ```{r}
-mcmc <- sampling(mod, data=data, chains=4, iter=2000, open_progress=TRUE)
+mcmc <- sampling(mod, data=data, chains=4, iter=2000, open_progress=FALSE)
 ```
 
 We look at the summary table for the mcmc results.
-
 
 ```{r}
 mcmc
@@ -113,7 +109,6 @@ mcmc
 
 We extract the mcmc samples below.
 
-
 ```{r}
 post <- extract(mcmc)
 ```
@@ -121,7 +116,6 @@ post <- extract(mcmc)
 Now `post` is a list of variables, each containing the full set of mcmc samples.
 Each variable is given as a matrix or vector, depending on the dimension of the variable.
 If multivariate, the matrix columns will give each individual element.
-
 
 ```{r}
 names(post)
@@ -133,7 +127,6 @@ This means you can plot the mcmc samples as a sequence to see the trajectory of 
 You can compare the appearance of this mcmc trajectory to that of the random walk MH algorithm. 
 In this case the samples are uncorrelated so each sample contributes much more information that the strongly correlated sample characteristic of RWMH.
 
-
 ```{r}
 options(repr.plot.width=6, repr.plot.height=5)
 par(mfrow=c(3,1),mar=c(4,4,1,1))
@@ -144,7 +137,6 @@ plot(post$sigma,ylab='sigma')
 
 Below we ignore the sequence and plot the distribution as a histogram.
 These plots represent the marginal distribution of each parameter after integrating (via mcmc) over the distribution of the other variables. 
-
 
 ```{r}
 options(repr.plot.width=6, repr.plot.height=2.5)
@@ -159,7 +151,6 @@ hist(post$sigma,main='sigma',xlab='')
 
 Below we randomly sample the mcmc samples to plot some lines.
 Since the order of the samples represents the mcmc steps, we want to pair the same sample numbers in order to get a proper sample from the joint posterior.
-
 
 ```{r}
 options(repr.plot.width=4, repr.plot.height=4)
@@ -179,7 +170,6 @@ We give the prior distribution on the slope a normal distribution with mean 2.5 
 
 For example, this prior may have come from analysis of previous data. 
 The Bayesian solution has a nice property that we would get the same answer when we use a previous posterior as a prior, vs. if we pooled all the data and analyzed them together.
-
 
 ```{r}
 stancode_prior <- "
@@ -205,7 +195,6 @@ model{
 
 We plot the prior
 
-
 ```{r}
 xin <- seq(0,3,0.01)
 plot(xin,dnorm(xin,mean=2.5,sd=0.1),type='l',xlab='beta1',ylab='Density')
@@ -213,16 +202,14 @@ plot(xin,dnorm(xin,mean=2.5,sd=0.1),type='l',xlab='beta1',ylab='Density')
 
 Compile the new Stan program.
 
-
 ```{r}
 mod_prior <- stan_model(model_code=stancode_prior)
 ```
 
 Sample from the posterior
 
-
 ```{r}
-mcmc_prior <- sampling(mod_prior, data=data, chains=4, iter=2000, open_progress=TRUE)
+mcmc_prior <- sampling(mod_prior, data=data, chains=4, iter=2000, open_progress=FALSE)
 ```
 
 

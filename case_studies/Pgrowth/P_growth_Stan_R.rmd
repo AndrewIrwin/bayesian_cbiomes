@@ -1,0 +1,383 @@
+## Introduction Stan via P Growth Example
+
+The model we will solve is
+
+$$ \frac{dP}{dt} = \gamma P - \lambda P^2 $$
+
+First we will load the required packages.
+
+
+```{r}
+library(deSolve)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+```
+
+We set our parameters, initial conditions, and simulation parameters
+
+
+```{r}
+theta <- list(gamma =0.25, lambda=0.1)
+x <- c(P=1)
+T  <- 30
+dt <- 1
+nt <- T/dt
+t  <- seq(0,T,length.out=nt)
+```
+
+We define the model in terms of a function that takes the time point, current, state, and parameters, and returns the value of the derivative.
+
+
+```{r}
+dxdt <- function(t,x,theta){
+    with(as.list(c(x,theta)),{
+        dP <- gamma*P - lambda*P*P
+        list(c(dP)) })}
+```
+
+Solve the ODE using the packaged ode solver.
+
+
+```{r}
+x <- as.data.frame(ode(y=x, times=t, func=dxdt, parms=theta))
+```
+
+Plot the results
+
+
+```{r}
+options(repr.plot.width=6, repr.plot.height=4)
+plot(t,x$P,type='l')
+```
+
+We choose a few time points where we have observations, sample the simulation at those time points, and add a bit of error to the state variable.
+
+
+```{r}
+t_obs_ind <- c(1,3,4,6,9,13,16,24)
+obs       <- x$P[t_obs_ind] + rnorm(length(t_obs_ind),sd=0.1)
+t_obs     <- x$t[t_obs_ind] 
+plot(t_obs,obs)
+```
+
+The Stan code below introduces the ODE solver functionality within Stan via two new blocks. 
+
+#### `functions` block
+This is where we define the function that returns the model derivatives as a function of the time step `t`, current state `x`, and parameters `theta`.
+The Stan ODE solver also expects two additional objects, `x_r` and `x_i`, where you can supply boundary conditions and other inputs. 
+We will not have to use these in our case studies and so will leave them empty.
+
+#### `transformed parameters` block
+Here is where we define the model state `x` which we treat as a transformed parameter in Stan.
+We use the standard (non-stiff) version of the ODE solver within Stan which implements a fourth order Runge Kutta method.
+The arguements of `integrate_ode_rk45` are 
+
+`integrate_ode_rk45(<function>,<initial conditions>,<initialization code>,<time>,<x_r>,<x_i>,<rel_tol>,<abs_tol>,<num_steps>)`
+
+Below we specify the initial conditions as a parameter and pass those parameters to the ODE solver. 
+We pass the time argument the points where we want to obtain the posterior estimates. 
+In general this set of time points will contain the time points where we have observations, in order for Stan to be able to compare the model prediction to the observation in the likelihood.
+However, we could also ask Stan to evaluate the posterior at places where we don't have data which would give us the posterior predictive distribution at that point.
+We we just need to pass Stan additional time indices in the `data` block to specify which times are being used in the likelihood.
+
+Note that we can also use the ODE solver in the same way within the model block.
+It is just personal preference.
+
+More detailed descriptions of the ODE solver options is available [here](https://mc-stan.org/docs/2_21/functions-reference/functions-ode-solver.html)
+
+
+```{r}
+stancode <- "functions {
+   real[] P_growth(real t,       // time
+                   real[] x,      // state
+                   real[] theta, // parameters
+                   real[] x_r,   // environmental data
+                   int[] x_i){
+    real gamma  = theta[1];
+    real lambda = theta[2];
+
+    real growth = gamma*x[1];
+    real loss   = lambda*x[1]*x[1];
+    
+    return {growth - loss};
+  }
+}
+data {
+    int<lower = 0> N;           // num obs
+    real t_obs[N];              // obs times
+    real<lower = 0> y[N];       // observed variable at measurement times
+    real sigma;
+}
+parameters {
+    real<lower=0,upper=1> theta[2];      // parameters
+    real<lower=0> x0[1];
+}
+transformed parameters {
+    real x[N,1] = integrate_ode_rk45(P_growth, x0, -1, t_obs, theta,
+                                      rep_array(0.0, 0), rep_array(0, 0),
+                                      1e-6, 1e-5, 1e3);
+}
+model {
+    //theta[1] ~ normal(0.1, 2);
+    //theta[2] ~ normal(0.1, 2);
+    x0       ~ normal(1.0, 10);
+    y[1:N]   ~ normal(x[1:N,1], sigma); // obs
+}"
+
+```
+
+Compile the model
+
+
+```{r}
+mod <- stan_model(model_code=stancode)
+```
+
+Organize the data for Stan. 
+Note that we are now passing the error standard deviation to Stan, instead of estimating it, and so appears in the `data` block and not the `parameter` block. 
+
+
+```{r}
+data <- list(N=length(t_obs),
+             t_obs=t_obs,
+             y=obs,
+             sigma=0.1)
+```
+
+Perform sampling
+
+
+```{r}
+mcmc <- sampling(mod,data=data,iter=2000,chains=4,open_progress=FALSE)
+```
+
+Look at the mcmc summaries.
+
+
+```{r}
+mcmc
+```
+
+Extract mcmc samples
+
+
+```{r}
+post <- extract(mcmc)
+```
+
+
+```{r}
+names(post)
+```
+
+Notice the dimensions of the variables.
+mcmc samples are always the first dimension.
+
+
+```{r}
+dim(post$theta)
+dim(post$x0)
+dim(post$x)
+```
+
+Plot the posterior marginal distributions via histograms.
+
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=4)
+par(mfrow=c(1,3))
+hist(post$theta[,1],xlab='gamma',main='')
+hist(post$theta[,2],xlab='lambda',main='')
+hist(post$x0,xlab='x0',main='')
+```
+
+Plot the joint distribution.
+
+
+```{r}
+options(repr.plot.width=4, repr.plot.height=4)
+plot(post$theta[,1],post$theta[,2])
+```
+
+## Periodic P Growth
+We will extend the model to include sinusoidal growth
+
+$$ \frac{dP}{dt} = \gamma\left(1+\sin (\omega t)\right) P - \lambda P^2  $$
+
+Specify parameters for synthetic data.
+
+
+```{r}
+theta_sin <- list(gamma =0.25,
+                  lambda=0.1,
+                  period=365,
+                  omega =2*pi/365,
+                      dt=1)
+x_sin <- c(P   =2.5,
+           time=0)
+T_sin  <- 365*4
+dt_sin <- 1
+nt_sin <- T_sin/dt_sin
+
+t_sin  <- seq(0,T_sin,length.out=nt_sin)
+```
+
+Definte function to simulate data
+
+
+```{r}
+dxdt_sin <- function(t,x,theta){
+    with(as.list(c(x,theta)),{
+        dP      <- gamma*(1+sin(omega*time))*P - lambda*P*P
+        delta_t <- dt
+        list(c(dP, delta_t))
+    })
+}
+```
+
+Solve ODE using ODE package
+
+
+```{r}
+x_sin <- as.data.frame(ode(y=x_sin, times=t_sin, func=dxdt_sin, parms=theta_sin))
+```
+
+Plot solution
+
+
+```{r}
+plot(x_sin$time,x_sin$P,type='l')
+```
+
+Choose random time points to sample the solution.
+Make sure the observations aren't negative after adding random observational noise.
+
+
+```{r}
+t_obs_ind_sin      <- sort(sample(1:length(t_sin),50))
+obs_sin            <- x_sin$P[t_obs_ind_sin] + rnorm(length(t_obs_ind_sin),sd=0.5)
+obs_sin[obs_sin<0] <- 0
+t_obs_sin          <- x_sin$time[t_obs_ind_sin] 
+```
+
+Plot the synthetic observations.
+
+
+```{r}
+plot(t_obs_sin,obs_sin,type='l')
+```
+
+The Stan code below implements the modified model. 
+Notice the `growth` calculation where we calculate the sinusoidal component via the model variable `t`. 
+
+
+```{r}
+stancode_sin <- "functions {
+   real[] P_growth(real t,       // time
+                   real[] x,      // state
+                   real[] theta, // parameters
+                   real[] x_r,   // environmental data
+                   int[] x_i){
+    real gamma  = theta[1];
+    real lambda = theta[2];
+	//real a      = theta[3];
+
+    real growth = gamma*x[1] + gamma*sin(2*pi()*(1.0/365.0)*t)*x[1];
+    real loss   = lambda*x[1]*x[1];
+    
+    return {growth - loss};
+  }
+}
+data {
+    int<lower = 0> N;           // num obs
+    real<lower = 0> t_obs[N];              // obs times
+    real<lower = 0> y[N];       // observed variable at measurement times
+    //real<lower = 0> sigma;
+}
+parameters {
+    real<lower=0> theta[2];      // parameters
+    real<lower=0> x0[1];
+	real<lower=1E-15> sigma;
+}
+transformed parameters {
+    real<lower=0> x[N,1] = integrate_ode_rk45(P_growth, x0, 1, t_obs, theta,
+                                      rep_array(0.0, 0), rep_array(0, 0),
+                                      1e-6, 1e-6, 1e5);
+}
+model {
+    theta[1] ~ normal(0.1, 1);
+    theta[2] ~ normal(0.1, 1);
+	//theta[3] ~ normal(0.01,1);
+    x0       ~ normal(1.0, 10);
+    y[1:N]   ~ normal(x[1:N,1], sigma); // obs
+}"
+
+```
+
+Compile the Stan code.
+
+
+```{r}
+mod_sin <- stan_model(model_code=stancode_sin)
+```
+
+Organize the data
+
+
+```{r}
+data_sin <- list(N=length(t_obs_sin),
+             t_obs=round(t_obs_sin),
+             y=obs_sin)
+```
+
+Perform mcmc sampling
+
+
+```{r}
+mcmc_sin <- sampling(mod_sin,data=data_sin,iter=2000,chains=4,open_progress=FALSE)
+```
+
+Look at the summaries of the mcmc chains
+
+
+```{r}
+mcmc_sin
+```
+
+Extract posterior samples
+
+
+```{r}
+post_sin <- extract(mcmc_sin)
+```
+
+Plot the histograms
+
+
+```{r}
+par(mfrow=c(1,3))
+hist(post_sin$theta[,1],xlab='gamma',main='')
+hist(post_sin$theta[,2],xlab='lambda',main='')
+hist(post_sin$x0,xlab='x0',main='')
+```
+
+Plot the joint distribution
+
+
+```{r}
+pairs(post_sin$theta)
+```
+
+Calculate the mean and standard deviation of the fitted `x`s and plot them.
+
+
+```{r}
+mu  <- colMeans(post_sin$x[,,1])
+std <- apply(post_sin$x[,,1],2,sd) 
+```
+
+
+```{r}
+plot(t_obs_sin,colMeans(post_sin$x[,,1]),type='l')
+points(t_obs_sin,obs_sin)
+```

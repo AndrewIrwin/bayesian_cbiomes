@@ -1,0 +1,99 @@
+## Dynamics of microbial OTUs
+
+In this notebook we use the multivariate AR(1) model to fit a multivariate time series of marine bacterial operational taxonomic units (OTUs).
+The dataset comes from
+
+*Martin-Platero et al. 2018. High resolution time sereis reveals cohesive but short lived communities in coastal plankton. Nature Communications*
+
+First load packages and read in the dataset:
+
+
+```{r}
+library(rstan)
+options(mc.cores=parallel::detectCores())
+```
+
+
+```{r}
+DAT <- read.csv('data/bacterial_OTU.csv',stringsAsFactors=FALSE)
+```
+
+Aggregate the data by phyla, which is indicated in the third column of the dataset:
+
+
+```{r}
+phyla <- unique(DAT[,3])   #extract unique phyla IDS
+PHY   <- data.frame()      #open empty data frame
+for(i in 1:length(phyla)){
+	xtmp <- apply(as.data.frame(DAT[DAT[,3]==phyla[i],9:ncol(DAT)]),2,sum) #sum all OTUs of that phyla
+	PHY  <- rbind(PHY,xtmp)                                                #attach as rows to the empty data frame
+}
+```
+
+Now take a look to see how each phyla contributes to the total abundances:
+
+
+```{r}
+rbind(1:nrow(PHY),rowSums(PHY))  #list row number alongside row sums
+```
+
+
+
+
+We will only model the four most abundant phyla, to keep things simple and fast within Stan.
+Below we subset PHY for those phyla:
+
+
+```{r}
+phy <- PHY[1:4,]
+```
+
+
+```{r}
+options(repr.plot.width=6, repr.plot.height=4)
+matplot(t(phy),type='l')
+```
+
+
+```{r}
+dat_PHY <- list(T=ncol(phy),
+                p=nrow(phy),
+                Y=phy)
+```
+
+
+```{r}
+mod_code <- "data {
+	int T;         //length of time series
+	int p;         //number of variables
+	matrix[p,T] Y; //matrix of observations; variables are rows; time is columns
+}
+parameters{
+	matrix[p,p] PHI;     //dynamics matrix
+	vector<lower=1E-15>[p] sigma;     //variances of stochastic forcing
+	vector[p] init;      //mean of initial conditions as parameter vector
+}
+model{
+	Y[,1] ~ normal(init, sigma);            //distribution of the initial conditions
+	for(i in 2:T){
+        Y[,i] ~ normal(PHI*Y[,i-1],sigma);  //conditional predictive distribution
+	}
+}"
+```
+
+
+```{r}
+mod <- stan_model(model_code=mod_code)
+```
+
+
+```{r}
+mcmc <- sampling(mod,data=dat_PHY,iter=2000,warmup=1000,open_progress=TRUE)
+```
+
+
+```{r}
+mcmc
+```
+
+

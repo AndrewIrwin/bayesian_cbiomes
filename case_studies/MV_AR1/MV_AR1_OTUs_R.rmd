@@ -3,7 +3,7 @@
 In this notebook we use the multivariate AR(1) model to fit a multivariate time series of marine bacterial operational taxonomic units (OTUs).
 The dataset comes from
 
-*Martin-Platero et al. 2018. High resolution time sereis reveals cohesive but short lived communities in coastal plankton. Nature Communications*
+*Martin-Platero et al. 2018. High resolution time series reveals cohesive but short lived communities in coastal plankton. Nature Communications*
 
 First load packages and read in the dataset:
 
@@ -88,7 +88,7 @@ mod <- stan_model(model_code=mod_code)
 
 
 ```{r}
-mcmc <- sampling(mod,data=dat_PHY,iter=2000,warmup=1000,open_progress=TRUE)
+mcmc <- sampling(mod,data=dat_PHY,iter=2000,warmup=1000,open_progress=FALSE)
 ```
 
 

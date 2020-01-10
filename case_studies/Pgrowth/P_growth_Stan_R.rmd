@@ -330,8 +330,7 @@ data_sin <- list(N=length(t_obs_sin),
              y=obs_sin)
 ```
 
-Perform mcmc sampling
-
+Perform mcmc sampling. (Irwin comment: This step takes quite a while -- about 20 minutes. Probably hard to find the optimum.)
 
 ```{r}
 mcmc_sin <- sampling(mod_sin,data=data_sin,iter=2000,chains=4,open_progress=FALSE)

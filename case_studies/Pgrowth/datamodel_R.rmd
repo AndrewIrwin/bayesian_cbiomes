@@ -3,7 +3,6 @@ use deterministic plankton model (with built-in in ODE solver)
 
 
 ```{r}
-rm(list=ls())
 library(deSolve)
 ```
 
